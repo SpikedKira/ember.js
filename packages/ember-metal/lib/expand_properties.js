@@ -5,7 +5,8 @@ import { assert } from 'ember-debug';
 @submodule ember-metal
 */
 
-var END_WITH_EACH_REGEX = /\.@each$/;
+var END_WITH_EACH_REGEX = /\.@each$/,
+    NESTED_BRACES = /\{[^}{]*\{|\}[^}{]*\}/g;
 
 /**
   Expands `pattern`, invoking `callback` for each expansion.
@@ -35,60 +36,39 @@ var END_WITH_EACH_REGEX = /\.@each$/;
   expansion, and is passed the expansion.
 */
 export default function expandProperties(pattern, callback) {
-  assert(`A computed property key must be a string, you passed ${typeof pattern} ${pattern}`, typeof pattern === 'string');
+  assert('A computed property key must be a string', typeof pattern === 'string');
   assert(
     'Brace expanded properties cannot contain spaces, e.g. "user.{firstName, lastName}" should be "user.{firstName,lastName}"',
     pattern.indexOf(' ') === -1
   );
+  assert(
+    `Brace expanded properties have to be balanced and cannot be nested, pattern: ${pattern}`,
+    pattern.match( NESTED_BRACES ) === null
+  );
 
-  let unbalancedNestedError = `Brace expanded properties have to be balanced and cannot be nested, pattern: ${pattern}`;
-  let properties = [pattern];
-
-  // Iterating backward over the pattern makes dealing with indices easier.
-  let bookmark;
-  let inside = false;
-  for (let i = pattern.length; i > 0; --i) {
-    let current = pattern[i - 1];
-
-    switch (current) {
-      // Closing curly brace will be the first character of the brace expansion we encounter.
-      // Bookmark its index so long as we're not already inside a brace expansion.
-      case '}':
-        if (!inside) {
-          bookmark = i - 1;
-          inside = true;
-        } else {
-          assert(unbalancedNestedError, false);
-        }
-        break;
-      // Opening curly brace will be the last character of the brace expansion we encounter.
-      // Apply the brace expansion so long as we've already seen a closing curly brace.
-      case '{':
-        if (inside) {
-          let expansion = pattern.slice(i, bookmark).split(',');
-          // Iterating backward allows us to push new properties w/out affecting our "cursor".
-          for (let j = properties.length; j > 0; --j) {
-            // Extract the unexpanded property from the array.
-            let property = properties.splice(j - 1, 1)[0];
-            // Iterate over the expansion, pushing the newly formed properties onto the array.
-            for (let k = 0; k < expansion.length; ++k) {
-              properties.push(property.slice(0, i - 1) +
-                              expansion[k] +
-                              property.slice(bookmark + 1));
-            }
-          }
-          inside = false;
-        } else {
-          assert(unbalancedNestedError, false);
-        }
-        break;
-    }
+  if (pattern.indexOf('{') < 0) {
+    callback( pattern.replace(END_WITH_EACH_REGEX, '.[]') );
+  } else {
+    dive("", pattern, callback);
   }
-  if (inside) {
-    assert(unbalancedNestedError, false);
+}
+
+function dive(prefix, pattern, callback) {
+  var start = pattern.indexOf('{');
+
+  if (start < 0) {
+    callback((prefix + pattern).replace(END_WITH_EACH_REGEX, '.[]'));
+    return;
   }
 
-  for (let i = 0; i < properties.length; i++) {
-    callback(properties[i].replace(END_WITH_EACH_REGEX, '.[]'));
+  var end = pattern.indexOf('}');
+  var tempArr = pattern.substring(start + 1, end).split(',');
+  var after = pattern.substring(end + 1);
+  prefix = prefix + pattern.substring(0, start);
+
+  let i = tempArr.length;
+  let k = 0;
+  while (k < i) {
+    dive(prefix + tempArr[k++], after, callback);
   }
 }
